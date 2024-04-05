@@ -68,9 +68,11 @@ func ConstructUARTMessage(msg dataType.UARTMessage) string {
 func ParseUARTMessage(msg []byte) (dataType.UARTMessage, error) {
 	//Msg is a byte array, ithas a form of "<tag>payload</tag>" where the payload is a serie of hex values
 	strMsg := string(msg)
-	if strings.HasPrefix(strMsg, "<cmd>") && strings.Contains(strMsg, "</cmd>") {
-		idx := strings.Index(strMsg, "</cmd>")
-		extractedPayload := strMsg[5:idx]
+	if strings.Contains(strMsg, "<cmd>") && strings.Contains(strMsg, "</cmd>") {
+		fmt.Println("Parsing cmd message: ", strMsg)
+		init_in := strings.Index(strMsg, "<cmd>")
+		fin_id := strings.Index(strMsg, "</cmd>")
+		extractedPayload := strMsg[init_in+5 : fin_id]
 		pay, err := ExtractPayloadCmd(extractedPayload)
 		if err != nil {
 			return dataType.UARTMessage{

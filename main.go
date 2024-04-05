@@ -32,8 +32,8 @@ contain multiple boards of the same system type. The board identifier is a seque
 */
 
 // Startup function
-func startup() (reader *os.File, writer *comm.Writer, watchdogResetChan chan bool, err error) {
-	reader, writer, err = comm.New()
+func startup(read, write string) (reader *os.File, writer *comm.Writer, watchdogResetChan chan bool, err error) {
+	reader, writer, err = comm.New(read, write)
 	watchdogResetChan = make(chan bool, 1)
 
 	return reader, writer, watchdogResetChan, err
@@ -46,44 +46,56 @@ func operation(reader *os.File, writer *comm.Writer, watchdogResetChan chan bool
 	go watchdog.NewWatchdogTimer(watchdogResetChan)
 
 	eps.E.SetOpMode(constants.OpModeNominal)
+	var buffer []byte
+
 	for {
 		select {
 		case <-watchdogResetChan:
 			fmt.Println("Watchdog timer reset.")
 			//TODO: Implement the system reset logic here
 		default:
-			scanner := bufio.NewScanner(reader)
-			fmt.Println("Reading from FIFO...")
-			if scanner.Scan() {
-				// Reset the watchdog timer
-				watchdogResetChan <- true
-
-				// Process the received message
-				message := scanner.Bytes()
-				UARTMessage, err := UART.ParseUARTMessage(message)
+			bufioReader := bufio.NewReader(reader)
+			for {
+				// Read one byte at a time
+				b, err := bufioReader.ReadByte()
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error parsing message: %v\n", err)
-					break
+					fmt.Println("Error reading from FIFO:", err)
+					return
 				}
-				fmt.Printf("Received message: %+v\n", UARTMessage)
 
-				// Process the received command and generate a response
-				response, err := eps.ProcessCommand(UARTMessage)
-				if err != nil {
-					fmt.Fprintf(os.Stderr, "Error processing command: %v\n", err)
-				}
-				rsp := UART.ConstructUARTMessage(response)
-				fmt.Printf("Generated response: \n%+v\n", response)
+				buffer = append(buffer, b)
 
-				// Write the response to the FIFO in a byte format
-
-				//TODO: Check if I should write the response to the FIFO as a string or as a byte array
-				if _, err := writer.Write([]byte(rsp)); err != nil {
-					fmt.Fprintf(os.Stderr, "Error writing to FIFO: %v\n", err)
+				if len(buffer) >= 6 && string(buffer[len(buffer)-6:]) == "</cmd>" {
+					break // Found "</cmd>", stop reading
 				}
 			}
-			if err := scanner.Err(); err != nil {
-				fmt.Fprintf(os.Stderr, "Error reading from FIFO: %v\n", err)
+			fmt.Println("Reading from FIFO...")
+			// Reset the watchdog timer
+			watchdogResetChan <- true
+
+			// Process the received message
+			message := buffer //scanner.Bytes()
+			buffer = nil
+			UARTMessage, err := UART.ParseUARTMessage(message)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error parsing message: %v\n", err)
+				break
+			}
+			fmt.Printf("Received message: %+v\n", UARTMessage)
+
+			// Process the received command and generate a response
+			response, err := eps.ProcessCommand(UARTMessage)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error processing command: %v\n", err)
+			}
+			rsp := UART.ConstructUARTMessage(response)
+			fmt.Printf("Generated response: \n%+v\n", response)
+
+			// Write the response to the FIFO in a byte format
+
+			//TODO: Check if I should write the response to the FIFO as a string or as a byte array
+			if _, err := writer.Write([]byte(rsp)); err != nil {
+				fmt.Fprintf(os.Stderr, "Error writing to FIFO: %v\n", err)
 			}
 		}
 
@@ -95,7 +107,14 @@ func operation(reader *os.File, writer *comm.Writer, watchdogResetChan chan bool
 
 // Main function
 func main() {
-	reader, writer, watchdogResetChan, err := startup()
+	//read from command line arguments read_pipe and write_pipe
+	params := os.Args
+	if len(params) != 3 {
+		fmt.Println("Usage: ./main <read_pipe> <write_pipe> where pipes are at /tmp/<passed_names>")
+		os.Exit(1)
+	}
+
+	reader, writer, watchdogResetChan, err := startup(params[1], params[2])
 	if err != nil {
 		panic(err)
 	}
